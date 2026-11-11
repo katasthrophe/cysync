@@ -18,6 +18,15 @@ else:
 
 STATIC_DIR = BASE_DIR / "static"
 
+# Fallback: if static not found, search upward
+if not STATIC_DIR.exists():
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "static"
+        if candidate.exists():
+            STATIC_DIR = candidate
+            BASE_DIR = parent
+            break
+
 app = FastAPI(title="CyTube Magnet & Sync Video Room")
 
 app.add_middleware(
