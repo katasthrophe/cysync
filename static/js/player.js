@@ -210,7 +210,9 @@ class UniversalPlayer {
   }
 
   showEmbed() {
-    if (this.embedContainer) this.embedContainer.style.display = 'flex';
+    if (this.embedContainer) {
+      this.embedContainer.style.display = 'flex';
+    }
   }
 
   hideEmbed() {
@@ -222,35 +224,81 @@ class UniversalPlayer {
 
   loadTikTok(source) {
     if (!this.embedContainer) return;
-    // Extract video ID from URL
-    const match = source.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/);
-    const videoId = match ? match[1] : null;
-    const embedUrl = videoId
-      ? `https://www.tiktok.com/embed/v2/${videoId}`
-      : `https://www.tiktok.com/embed/v2/${source}`;
+    // Extract video ID from URL or numeric ID
+    const match = source.match(/video\/(\d+)/);
+    const videoId = match ? match[1] : (source.match(/^\d+$/) ? source : null);
 
-    this.embedContainer.innerHTML = `
-      <div style="text-align:center;color:#aaa;margin-bottom:8px;font-size:13px;">
-        🎵 TikTok — La sincronización de play/pausa no está disponible para este sitio
-      </div>
-      <iframe src="${embedUrl}"
-        style="width:325px;max-width:100%;height:580px;border:none;border-radius:12px;"
-        allowfullscreen allow="encrypted-media">
-      </iframe>`;
+    if (videoId) {
+      // Use player/v1 which is TikTok's modern official embed player
+      const embedUrl = `https://www.tiktok.com/player/v1/${videoId}?autoplay=1`;
+      this.embedContainer.innerHTML = `
+        <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:100%; padding: 10px;">
+          <iframe 
+            src="${embedUrl}"
+            style="width: 340px; max-width: 95%; height: 95%; min-height: 480px; border: none; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.6);"
+            allow="accelerometer; autoplay; encrypted-media; fullscreen; picture-in-picture"
+            allowfullscreen>
+          </iframe>
+          <div style="margin-top: 6px; font-size: 12px; color: #94a3b8;">
+            🎵 TikTok oficial (reproduce directo en el widget)
+          </div>
+        </div>`;
+    } else {
+      // Fallback: render embed blockquote via TikTok embed script
+      this.embedContainer.innerHTML = `
+        <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:100%; overflow:auto; padding: 10px;">
+          <blockquote class="tiktok-embed" cite="${source}" data-video-id="" style="max-width: 605px;min-width: 325px;">
+            <section><a target="_blank" href="${source}">Cargando video de TikTok...</a></section>
+          </blockquote>
+        </div>`;
+      this.injectScript('https://www.tiktok.com/embed.js');
+    }
   }
 
-  loadTwitter(tweetId) {
+  loadTwitter(tweetIdOrUrl) {
     if (!this.embedContainer) return;
-    // tweetId can be a numeric ID or full URL
-    const embedUrl = `https://platform.twitter.com/embed/Tweet.html?id=${tweetId}&theme=dark&dnt=true`;
+    // Extract numeric ID if given as a full URL
+    const match = String(tweetIdOrUrl).match(/status\/(\d+)/);
+    const tweetId = match ? match[1] : tweetIdOrUrl;
+
     this.embedContainer.innerHTML = `
-      <div style="text-align:center;color:#aaa;margin-bottom:8px;font-size:13px;">
-        🐦 X / Twitter — La sincronización de play/pausa no está disponible para este sitio
-      </div>
-      <iframe src="${embedUrl}"
-        style="width:550px;max-width:100%;min-height:300px;height:auto;border:none;border-radius:12px;background:#000;"
-        allowfullscreen allow="encrypted-media">
-      </iframe>`;
+      <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:100%; overflow-y:auto; padding: 10px;">
+        <div id="twitter-widget-mount" style="max-width: 550px; width: 100%; display: flex; justify-content: center;">
+          <blockquote class="twitter-tweet" data-theme="dark" data-media-max-view="video">
+            <a href="https://twitter.com/x/status/${tweetId}">Cargando Tweet / Post de X...</a>
+          </blockquote>
+        </div>
+      </div>`;
+
+    // Load Twitter widgets.js and render
+    if (window.twttr && window.twttr.widgets) {
+      try {
+        window.twttr.widgets.load(document.getElementById('twitter-widget-mount'));
+      } catch (e) {
+        console.warn('twttr widgets load error:', e);
+      }
+    } else {
+      this.injectScript('https://platform.twitter.com/widgets.js', () => {
+        if (window.twttr && window.twttr.widgets) {
+          window.twttr.widgets.load(document.getElementById('twitter-widget-mount'));
+        }
+      });
+    }
+  }
+
+  injectScript(src, callback) {
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing) {
+      if (typeof callback === 'function') callback();
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    if (typeof callback === 'function') {
+      script.onload = callback;
+    }
+    document.body.appendChild(script);
   }
 
   loadYouTube(videoId, initialTime = 0, initialState = 'playing') {

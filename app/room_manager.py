@@ -184,7 +184,7 @@ async def fetch_media_title(media_type: str, source: str, default_title: str) ->
         try:
             tweet_url = f"https://twitter.com/i/status/{source}" if source.isdigit() else source
             encoded = urllib.parse.quote(tweet_url, safe='')
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
                 res = await client.get(
                     f"https://publish.twitter.com/oembed?url={encoded}&omit_script=true",
                     headers={"User-Agent": "Mozilla/5.0"}
