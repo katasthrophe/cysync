@@ -534,16 +534,6 @@ document.addEventListener('DOMContentLoaded', () => {
     submitPlayNowBtn.addEventListener('click', () => handleAddMedia(true));
   }
 
-  // Quick Preset Buttons in Modal
-  document.querySelectorAll('.preset-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const source = btn.getAttribute('data-source');
-      const title = btn.getAttribute('data-title');
-      if (mediaInput) mediaInput.value = source;
-      if (mediaTitleInput) mediaTitleInput.value = title;
-    });
-  });
-
   // Username Change
   if (changeUserBtn) {
     changeUserBtn.addEventListener('click', () => {

@@ -45,3 +45,11 @@ class AddMediaRequest(BaseModel):
     source: str
     title: Optional[str] = None
     added_by: Optional[str] = "Anonymous"
+
+class AuthRequest(BaseModel):
+    username: str
+    password: str
+
+class CreateRoomRequest(BaseModel):
+    room_id: str
+    title: Optional[str] = None

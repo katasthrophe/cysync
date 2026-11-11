@@ -8,8 +8,9 @@ from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.models import AddMediaRequest
+from app.models import AddMediaRequest, AuthRequest, CreateRoomRequest
 from app.room_manager import room_manager
+from app.auth import register_user, authenticate_user
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
@@ -42,13 +43,44 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/", response_class=FileResponse)
-async def get_index():
+async def get_home():
+    # Return homepage if home.html exists, otherwise index.html
+    home_file = STATIC_DIR / "home.html"
+    if home_file.exists():
+        return FileResponse(home_file)
     return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/r/{room_id}", response_class=FileResponse)
 async def get_room_page(room_id: str):
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.post("/api/auth/register")
+async def api_register(req: AuthRequest):
+    ok, msg = register_user(req.username, req.password)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"success": True, "username": req.username, "message": msg}
+
+
+@app.post("/api/auth/login")
+async def api_login(req: AuthRequest):
+    ok, name_or_err = authenticate_user(req.username, req.password)
+    if not ok:
+        raise HTTPException(status_code=401, detail=name_or_err)
+    return {"success": True, "username": name_or_err}
+
+
+@app.post("/api/rooms/create")
+async def api_create_room(req: CreateRoomRequest):
+    room_id = req.room_id.strip()
+    if not room_id or len(room_id) < 2 or len(room_id) > 30:
+        raise HTTPException(status_code=400, detail="El identificador de sala debe tener entre 2 y 30 caracteres.")
+    room = room_manager.get_or_create_room(room_id)
+    if req.title and req.title.strip():
+        room.title = req.title.strip()[:40]
+    return {"success": True, "room_id": room.room_id, "title": room.title, "url": f"/r/{room.room_id}"}
 
 
 @app.get("/api/rooms")
