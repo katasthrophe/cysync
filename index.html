@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CySync - Video Sync & Torrent Web Player</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22%3E<text y=%2226%22 font-size=%2224%22>🎬</text></svg>">
+</head>
+<body>
+
+  <!-- Top Navbar -->
+  <header class="navbar">
+    <div style="display: flex; align-items: center; gap: 1rem;">
+      <a href="/" class="brand">
+        <div class="brand-icon">▶️</div>
+        <span>CySync</span>
+      </a>
+      <div class="room-badge">
+        <div id="connection-status-dot" class="status-dot" title="Connecting..."></div>
+        <span id="room-name-display" style="font-weight: 600;">Room: default</span>
+      </div>
+    </div>
+
+    <div class="nav-actions">
+      <button id="btn-toggle-lock" class="btn" style="display: none;" title="Control de reproducción exclusivo del Host">
+        🌐 Control: Todos
+      </button>
+      <button id="btn-claim-dj" class="btn" title="Tomar control de Host / DJ">👑 Claim DJ</button>
+      <button id="btn-share-room" class="btn" title="Copiar enlace de la sala">🔗 Share Room</button>
+      <button id="btn-change-username" class="btn" title="Cambiar tu nombre de usuario">
+        👤 <span id="username-display">User</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+
+    <!-- Left Column: Video Player & Media Controls -->
+    <section class="video-column">
+      
+      <!-- Video Player Wrapper -->
+      <div class="player-wrapper">
+        <!-- YouTube Container -->
+        <div id="yt-player-container"></div>
+
+        <!-- HTML5 / WebTorrent Video Element -->
+        <video id="torrent-player" controls playsinline style="display: none;"></video>
+
+        <!-- Click to play overlay for browser autoplay policy -->
+        <div id="torrent-play-overlay" style="display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.65); z-index: 20; display: none; align-items: center; justify-content: center; cursor: pointer;">
+          <button class="btn btn-primary" style="font-size: 1.1rem; padding: 0.75rem 1.5rem; border-radius: 30px; box-shadow: 0 0 24px rgba(139, 92, 246, 0.8);">
+            ▶️ Click to Start Torrent Video
+          </button>
+        </div>
+
+        <!-- WebTorrent Live Overlay HUD -->
+        <div id="torrent-hud" class="torrent-hud" style="display: none;">
+          <div class="hud-row">
+            <span class="hud-badge">WEBTORRENT</span>
+            <span id="hud-status" style="font-weight: 600;">Connecting...</span>
+          </div>
+          <div class="hud-row" style="color: #94a3b8; font-size: 0.75rem;">
+            <span>Peers: <b id="hud-peers" style="color: #38bdf8;">0</b></span>
+            <span>•</span>
+            <span>Speed: <b id="hud-speed" style="color: #34d399;">0 KB/s</b></span>
+            <span>•</span>
+            <span>Progress: <b id="hud-progress" style="color: #c084fc;">0%</b></span>
+          </div>
+        </div>
+
+        <!-- Empty state placeholder -->
+        <div id="empty-player-state" class="empty-player-state">
+          <div style="font-size: 3rem;">🎬</div>
+          <h3 style="color: var(--text-main);">Nothing is currently playing</h3>
+          <p style="font-size: 0.85rem; max-width: 380px;">Queue a YouTube video or paste a Torrent Magnet link below to start streaming with friends.</p>
+        </div>
+      </div>
+
+      <!-- Player Controls Bar -->
+      <div class="player-controls-bar">
+        <div class="control-group">
+          <button id="btn-play-pause" class="btn btn-primary">▶️ Play</button>
+          <button id="btn-skip" class="btn" title="Skip to next queued video">⏭️ Skip</button>
+          <button id="btn-voteskip" class="btn" title="Vote to skip current media">🗳️ Vote Skip</button>
+        </div>
+
+        <div class="control-group" style="flex: 1; margin: 0 0.5rem; min-width: 180px;">
+          <input type="range" id="playback-progress" min="0" max="100" value="0" step="0.1" style="width: 100%; cursor: pointer; accent-color: var(--accent-purple);" />
+        </div>
+
+        <div class="control-group">
+          <span id="time-display" style="font-size: 0.82rem; font-family: monospace; color: var(--text-muted);">00:00 / 00:00</span>
+          <button id="btn-sync" class="btn btn-success" title="Force re-sync with room">⚡ Force Sync</button>
+        </div>
+      </div>
+
+      <!-- Now Playing Info Header -->
+      <div class="media-header">
+        <div class="media-title-area">
+          <div id="current-media-title" class="media-title">Loading room...</div>
+          <div class="media-subtext">
+            <span id="current-media-type" class="type-pill">WAITING</span>
+            <span id="current-media-added-by">Waiting for playlist</span>
+          </div>
+        </div>
+
+        <button id="btn-open-add-modal" class="btn btn-primary" style="white-space: nowrap;">
+          ➕ Add Video / Magnet
+        </button>
+      </div>
+
+    </section>
+
+    <!-- Right Column: Live Chat & Viewer List -->
+    <section class="chat-column">
+      <div class="chat-tabs">
+        <button id="tab-chat-btn" class="chat-tab active">💬 Chat</button>
+        <button id="tab-users-btn" class="chat-tab">👥 Viewers <span id="users-tab-count">(1)</span></button>
+        <button id="chat-sound-toggle" class="chat-tab" style="flex: 0 0 45px;" title="Toggle Sound">🔔</button>
+      </div>
+
+      <!-- Chat Tab Panel -->
+      <div id="panel-chat" class="chat-panel">
+        <div id="chat-messages" class="chat-messages">
+          <!-- Dynamic chat messages go here -->
+        </div>
+
+        <div class="chat-input-area">
+          <input type="text" id="chat-input" class="chat-input" placeholder="Say something in room..." maxlength="400" autocomplete="off" />
+          <button id="chat-send-btn" class="btn btn-primary">Send</button>
+        </div>
+      </div>
+
+      <!-- Viewers Tab Panel -->
+      <div id="panel-users" class="chat-panel" style="display: none;">
+        <div id="users-list" class="users-list">
+          <!-- Online users will be rendered here -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Bottom Full Width: Playlist / Queue -->
+    <section class="playlist-section">
+      <div class="playlist-header">
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <h3 style="font-size: 1.1rem; font-weight: 600;">📑 Room Playlist</h3>
+          <span id="playlist-count" style="font-size: 0.85rem; color: var(--text-muted);">(0 items)</span>
+        </div>
+        <button onclick="document.getElementById('btn-open-add-modal').click()" class="btn btn-sm btn-primary">
+          ➕ Add to Queue
+        </button>
+      </div>
+
+      <div id="playlist-items" class="playlist-grid">
+        <!-- Queued items rendered dynamically -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Add Media Modal -->
+  <div id="add-media-modal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>➕ Add Video or Magnet to Room</h3>
+        <button id="btn-close-add-modal" class="close-btn">&times;</button>
+      </div>
+
+      <div class="form-group">
+        <label for="media-url-input">YouTube URL / Video ID or Magnet Link:</label>
+        <input 
+          type="text" 
+          id="media-url-input" 
+          class="form-input" 
+          placeholder="https://www.youtube.com/watch?v=... or magnet:?xt=urn:btih:..." 
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="media-title-input">Custom Title (optional):</label>
+        <input 
+          type="text" 
+          id="media-title-input" 
+          class="form-input" 
+          placeholder="Leave blank to auto-detect title" 
+        />
+      </div>
+
+      <!-- Quick Preset Demo Buttons -->
+      <div class="presets-container">
+        <span class="presets-title">⚡ Quick 1-Click Test Presets:</span>
+        <div class="presets-row">
+          <button class="btn btn-sm preset-btn" data-source="aqz-KE-bpKQ" data-title="Big Buck Bunny 4K (YouTube)">
+            🎬 YouTube: Big Buck Bunny
+          </button>
+          <button class="btn btn-sm preset-btn" data-source="dQw4w9WgXcQ" data-title="Never Gonna Give You Up (YouTube)">
+            🎵 YouTube: Rick Astley
+          </button>
+          <button class="btn btn-sm preset-btn" data-source="magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&tr=udp%3A%2F%2Fexplodie.org%3A6969&tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969&tr=udp%3A%2F%2Ftracker.empire-js.us%3A1337&tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337&tr=wss%3A%2F%2Ftracker.openwebtorrent.com&tr=wss%3A%2F%2Ftracker.webtorrent.dev&tr=wss%3A%2F%2Ftracker.files.fm%3A7073%2Fannounce&ws=https%3A%2F%2Fwebtorrent.io%2Ftorrents%2F&xs=https%3A%2F%2Fwebtorrent.io%2Ftorrents%2Fsintel.torrent" data-title="Sintel (Official WebTorrent Magnet)">
+            🧲 Magnet: Sintel (Active 40+ Seeds)
+          </button>
+          <button class="btn btn-sm preset-btn" data-source="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" data-title="Big Buck Bunny (Direct MP4 Stream)">
+            🎥 Direct MP4 Stream
+          </button>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem;">
+        <button id="btn-submit-queue" class="btn btn-primary">➕ Add to Queue</button>
+        <button id="btn-submit-playnow" class="btn btn-success">▶️ Play Immediately</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- External Libraries: YouTube Iframe API & WebTorrent -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script src="https://cdn.jsdelivr.net/npm/webtorrent@latest/webtorrent.min.js"></script>
+
+  <!-- CySync Modular Scripts -->
+  <script src="/static/js/player.js"></script>
+  <script src="/static/js/chat.js"></script>
+  <script src="/static/js/playlist.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
