@@ -214,9 +214,10 @@ async def fetch_media_title(media_type: str, source: str, default_title: str) ->
 
 
 class Room:
-    def __init__(self, room_id: str):
+    def __init__(self, room_id: str, is_private: bool = False):
         self.room_id = room_id
         self.title = f"Room {room_id}"
+        self.is_private = is_private
         self.users: Dict[str, UserInfo] = {}
         self.connections: Dict[str, WebSocket] = {}
         self.playback = PlaybackState()
@@ -591,10 +592,12 @@ class RoomManager:
     def __init__(self):
         self.rooms: Dict[str, Room] = {}
 
-    def get_or_create_room(self, room_id: str) -> Room:
+    def get_or_create_room(self, room_id: str, is_private: Optional[bool] = None) -> Room:
         clean_id = re.sub(r'[^a-zA-Z0-9_-]', '', room_id.lower()) or "default"
         if clean_id not in self.rooms:
-            self.rooms[clean_id] = Room(clean_id)
+            self.rooms[clean_id] = Room(clean_id, is_private=bool(is_private))
+        elif is_private is not None:
+            self.rooms[clean_id].is_private = is_private
         return self.rooms[clean_id]
 
     def list_rooms(self) -> List[dict]:
@@ -606,6 +609,7 @@ class RoomManager:
                 "now_playing": r.current_media.title if r.current_media else "Nothing playing"
             }
             for r in self.rooms.values()
+            if not r.is_private
         ]
 
 room_manager = RoomManager()

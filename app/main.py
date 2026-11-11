@@ -77,10 +77,16 @@ async def api_create_room(req: CreateRoomRequest):
     room_id = req.room_id.strip()
     if not room_id or len(room_id) < 2 or len(room_id) > 30:
         raise HTTPException(status_code=400, detail="El identificador de sala debe tener entre 2 y 30 caracteres.")
-    room = room_manager.get_or_create_room(room_id)
+    room = room_manager.get_or_create_room(room_id, is_private=req.is_private)
     if req.title and req.title.strip():
         room.title = req.title.strip()[:40]
-    return {"success": True, "room_id": room.room_id, "title": room.title, "url": f"/r/{room.room_id}"}
+    return {
+        "success": True, 
+        "room_id": room.room_id, 
+        "title": room.title, 
+        "is_private": room.is_private,
+        "url": f"/r/{room.room_id}"
+    }
 
 
 @app.get("/api/rooms")

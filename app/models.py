@@ -53,3 +53,4 @@ class AuthRequest(BaseModel):
 class CreateRoomRequest(BaseModel):
     room_id: str
     title: Optional[str] = None
+    is_private: bool = False

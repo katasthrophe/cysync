@@ -217,6 +217,12 @@
           <label for="create-room-title">Título visible (opcional):</label>
           <input type="text" id="create-room-title" class="form-input" placeholder="Ej: Noche de Pelis con Amigos" maxlength="40" />
         </div>
+        <div style="display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.2rem; cursor: pointer;">
+          <input type="checkbox" id="create-room-private" style="width: 18px; height: 18px; accent-color: var(--accent-purple); cursor: pointer;" />
+          <label for="create-room-private" style="margin: 0; cursor: pointer; font-size: 0.9rem; color: #cbd5e1; user-select: none;">
+            🔒 <strong>Sala Privada</strong> (oculta de la lista pública de inicio, solo accesible con el enlace directo)
+          </label>
+        </div>
         <button type="submit" class="btn btn-primary" style="margin-top: 0.5rem;">🚀 Crear e Ingresar a la Sala</button>
       </form>
     </div>
@@ -362,6 +368,7 @@
       e.preventDefault();
       const rawId = document.getElementById('create-room-id').value.trim();
       const title = document.getElementById('create-room-title').value.trim();
+      const isPrivate = document.getElementById('create-room-private').checked;
       const cleanId = rawId.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
       if (!cleanId) {
         alert('Por favor ingresa un identificador válido para la sala.');
@@ -372,7 +379,7 @@
         const res = await fetch('/api/rooms/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ room_id: cleanId, title: title || null })
+          body: JSON.stringify({ room_id: cleanId, title: title || null, is_private: isPrivate })
         });
         const data = await res.json();
         if (res.ok && data.url) {
