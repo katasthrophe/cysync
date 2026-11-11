@@ -116,14 +116,14 @@ def detect_media_type(source: str) -> tuple[str, str, str]:
     if "tiktok.com" in source:
         tiktok_id = extract_tiktok_id(source)
         if tiktok_id:
-            return "tiktok", source, f"TikTok Video"
+            return "tiktok", tiktok_id, f"TikTok Video ({tiktok_id})"
         return "tiktok", source, "TikTok Video"
 
     # 4. Twitter / X
     if "twitter.com" in source or "x.com" in source:
         tweet_id = extract_twitter_id(source)
         if tweet_id:
-            return "twitter", tweet_id, "Tweet / X Post"
+            return "twitter", tweet_id, f"Post de X ({tweet_id})"
         return "twitter", source, "Tweet / X Post"
 
     # 5. Direct Video URL or generic link
@@ -165,14 +165,20 @@ async def fetch_media_title(media_type: str, source: str, default_title: str) ->
     elif media_type == "tiktok":
         thumbnail = "https://www.tiktok.com/favicon.ico"
         try:
-            encoded = urllib.parse.quote(source, safe='')
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                res = await client.get(f"https://www.tiktok.com/oembed?url={encoded}")
+            target_url = f"https://www.tiktok.com/video/{source}" if source.isdigit() else source
+            encoded = urllib.parse.quote(target_url, safe='')
+            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+                res = await client.get(
+                    f"https://www.tiktok.com/oembed?url={encoded}",
+                    headers={"User-Agent": "Mozilla/5.0"}
+                )
                 if res.status_code == 200:
                     data = res.json()
                     t = data.get("title")
                     if t:
                         title = t[:80]
+                    elif data.get("author_name"):
+                        title = f"TikTok de @{data.get('author_name')}"
                     thumb = data.get("thumbnail_url")
                     if thumb:
                         thumbnail = thumb

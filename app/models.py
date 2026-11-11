@@ -5,7 +5,7 @@ import uuid
 
 class MediaItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
-    type: Literal["youtube", "torrent", "url"]
+    type: Literal["youtube", "torrent", "url", "tiktok", "twitter"]
     source: str
     title: str = "Untitled Media"
     duration: float = 0.0
