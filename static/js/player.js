@@ -57,8 +57,10 @@ class UniversalPlayer {
     this.torrentClient = null;
     this.currentTorrent = null;
 
+    this.embedFrame = null; // For TikTok / Twitter iframes
+
     this.currentMedia = null;
-    this.currentType = null; // 'youtube' | 'torrent' | 'url' | null
+    this.currentType = null; // 'youtube' | 'torrent' | 'url' | 'tiktok' | 'twitter' | null
 
     this.isApplyingSync = false;
     this.syncCooldownUntil = 0;
@@ -72,6 +74,7 @@ class UniversalPlayer {
     this.hudElement = document.getElementById(this.hudElementId);
     this.ytContainer = document.getElementById(this.ytContainerId);
     this.playOverlay = document.getElementById('torrent-play-overlay');
+    this.embedContainer = document.getElementById('embed-player-container');
 
     if (this.playOverlay && this.torrentVideo) {
       this.playOverlay.addEventListener('click', () => {
@@ -156,16 +159,29 @@ class UniversalPlayer {
 
     if (mediaItem.type === 'youtube') {
       this.hideTorrent();
+      this.hideEmbed();
       this.showYouTube();
       this.loadYouTube(mediaItem.source, initialTime, initialState);
     } else if (mediaItem.type === 'torrent') {
       this.hideYouTube();
+      this.hideEmbed();
       this.showTorrent();
       this.loadTorrent(mediaItem.source, initialTime, initialState);
     } else if (mediaItem.type === 'url') {
       this.hideYouTube();
+      this.hideEmbed();
       this.showTorrent();
       this.loadDirectUrl(mediaItem.source, initialTime, initialState);
+    } else if (mediaItem.type === 'tiktok') {
+      this.hideYouTube();
+      this.hideTorrent();
+      this.showEmbed();
+      this.loadTikTok(mediaItem.source);
+    } else if (mediaItem.type === 'twitter') {
+      this.hideYouTube();
+      this.hideTorrent();
+      this.showEmbed();
+      this.loadTwitter(mediaItem.source);
     }
   }
 
@@ -191,6 +207,50 @@ class UniversalPlayer {
     }
     if (this.hudElement) this.hudElement.style.display = 'none';
     if (this.playOverlay) this.playOverlay.style.display = 'none';
+  }
+
+  showEmbed() {
+    if (this.embedContainer) this.embedContainer.style.display = 'flex';
+  }
+
+  hideEmbed() {
+    if (this.embedContainer) {
+      this.embedContainer.style.display = 'none';
+      this.embedContainer.innerHTML = '';
+    }
+  }
+
+  loadTikTok(source) {
+    if (!this.embedContainer) return;
+    // Extract video ID from URL
+    const match = source.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/);
+    const videoId = match ? match[1] : null;
+    const embedUrl = videoId
+      ? `https://www.tiktok.com/embed/v2/${videoId}`
+      : `https://www.tiktok.com/embed/v2/${source}`;
+
+    this.embedContainer.innerHTML = `
+      <div style="text-align:center;color:#aaa;margin-bottom:8px;font-size:13px;">
+        🎵 TikTok — La sincronización de play/pausa no está disponible para este sitio
+      </div>
+      <iframe src="${embedUrl}"
+        style="width:325px;max-width:100%;height:580px;border:none;border-radius:12px;"
+        allowfullscreen allow="encrypted-media">
+      </iframe>`;
+  }
+
+  loadTwitter(tweetId) {
+    if (!this.embedContainer) return;
+    // tweetId can be a numeric ID or full URL
+    const embedUrl = `https://platform.twitter.com/embed/Tweet.html?id=${tweetId}&theme=dark&dnt=true`;
+    this.embedContainer.innerHTML = `
+      <div style="text-align:center;color:#aaa;margin-bottom:8px;font-size:13px;">
+        🐦 X / Twitter — La sincronización de play/pausa no está disponible para este sitio
+      </div>
+      <iframe src="${embedUrl}"
+        style="width:550px;max-width:100%;min-height:300px;height:auto;border:none;border-radius:12px;background:#000;"
+        allowfullscreen allow="encrypted-media">
+      </iframe>`;
   }
 
   loadYouTube(videoId, initialTime = 0, initialState = 'playing') {
@@ -606,6 +666,7 @@ class UniversalPlayer {
   stopAll() {
     this.hideYouTube();
     this.hideTorrent();
+    this.hideEmbed();
     if (this.currentTorrent) {
       try { this.currentTorrent.destroy(); } catch (e) {}
       this.currentTorrent = null;

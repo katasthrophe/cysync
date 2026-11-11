@@ -67,9 +67,27 @@ def extract_youtube_id(url_or_id: str) -> Optional[str]:
 
     return None
 
+def extract_tiktok_id(url: str) -> Optional[str]:
+    """Extract TikTok video ID from URL."""
+    match = re.search(r'tiktok\.com/@[^/]+/video/(\d+)', url)
+    if match:
+        return match.group(1)
+    # Short URLs like vm.tiktok.com/XXXXXXX
+    match = re.search(r'(?:vm|vt)\.tiktok\.com/([A-Za-z0-9]+)', url)
+    if match:
+        return match.group(1)
+    return None
+
+def extract_twitter_id(url: str) -> Optional[str]:
+    """Extract Tweet/post ID from Twitter/X URL."""
+    match = re.search(r'(?:twitter\.com|x\.com)/[^/]+/status/(\d+)', url)
+    if match:
+        return match.group(1)
+    return None
+
 def detect_media_type(source: str) -> tuple[str, str, str]:
     """
-    Detects if source is YouTube, Torrent (Magnet), or Direct Video URL.
+    Detects if source is YouTube, TikTok, Twitter/X, Torrent (Magnet), or Direct Video URL.
     Returns: (type, cleaned_source_or_id, default_title)
     """
     source = source.strip()
@@ -94,7 +112,21 @@ def detect_media_type(source: str) -> tuple[str, str, str]:
     if yt_id:
         return "youtube", yt_id, f"YouTube Video ({yt_id})"
 
-    # 3. Direct Video URL or generic link
+    # 3. TikTok
+    if "tiktok.com" in source:
+        tiktok_id = extract_tiktok_id(source)
+        if tiktok_id:
+            return "tiktok", source, f"TikTok Video"
+        return "tiktok", source, "TikTok Video"
+
+    # 4. Twitter / X
+    if "twitter.com" in source or "x.com" in source:
+        tweet_id = extract_twitter_id(source)
+        if tweet_id:
+            return "twitter", tweet_id, "Tweet / X Post"
+        return "twitter", source, "Tweet / X Post"
+
+    # 5. Direct Video URL or generic link
     if source.startswith("http://") or source.startswith("https://"):
         try:
             parsed = urllib.parse.urlparse(source)
@@ -129,6 +161,48 @@ async def fetch_media_title(media_type: str, source: str, default_title: str) ->
 
     elif media_type == "torrent":
         thumbnail = "https://webtorrent.io/img/network.png"
+
+    elif media_type == "tiktok":
+        thumbnail = "https://www.tiktok.com/favicon.ico"
+        try:
+            encoded = urllib.parse.quote(source, safe='')
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                res = await client.get(f"https://www.tiktok.com/oembed?url={encoded}")
+                if res.status_code == 200:
+                    data = res.json()
+                    t = data.get("title")
+                    if t:
+                        title = t[:80]
+                    thumb = data.get("thumbnail_url")
+                    if thumb:
+                        thumbnail = thumb
+        except Exception:
+            pass
+
+    elif media_type == "twitter":
+        thumbnail = "https://abs.twimg.com/favicons/twitter.3.ico"
+        try:
+            tweet_url = f"https://twitter.com/i/status/{source}" if source.isdigit() else source
+            encoded = urllib.parse.quote(tweet_url, safe='')
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                res = await client.get(
+                    f"https://publish.twitter.com/oembed?url={encoded}&omit_script=true",
+                    headers={"User-Agent": "Mozilla/5.0"}
+                )
+                if res.status_code == 200:
+                    data = res.json()
+                    author = data.get("author_name", "")
+                    text = data.get("html", "")
+                    # Extract first line of tweet text from HTML
+                    import re as _re
+                    clean = _re.sub(r'<[^>]+>', '', text).strip()
+                    snippet = clean[:60].strip()
+                    if author and snippet:
+                        title = f"@{author}: {snippet}..."
+                    elif author:
+                        title = f"Tweet de @{author}"
+        except Exception:
+            pass
 
     return title, thumbnail, duration
 

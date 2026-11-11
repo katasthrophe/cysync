@@ -48,6 +48,9 @@
         <!-- HTML5 / WebTorrent Video Element -->
         <video id="torrent-player" controls playsinline style="display: none;"></video>
 
+        <!-- TikTok / Twitter embed container -->
+        <div id="embed-player-container" style="display:none; flex-direction:column; align-items:center; justify-content:center; width:100%; min-height:300px; padding: 1rem;"></div>
+
         <!-- Click to play overlay for browser autoplay policy -->
         <div id="torrent-play-overlay" style="display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.65); z-index: 20; display: none; align-items: center; justify-content: center; cursor: pointer;">
           <button class="btn btn-primary" style="font-size: 1.1rem; padding: 0.75rem 1.5rem; border-radius: 30px; box-shadow: 0 0 24px rgba(139, 92, 246, 0.8);">
@@ -169,12 +172,12 @@
       </div>
 
       <div class="form-group">
-        <label for="media-url-input">YouTube URL / Video ID or Magnet Link:</label>
+        <label for="media-url-input">YouTube / TikTok / X (Twitter) URL, Magnet Link, or MP4:</label>
         <input 
           type="text" 
           id="media-url-input" 
           class="form-input" 
-          placeholder="https://www.youtube.com/watch?v=... or magnet:?xt=urn:btih:..." 
+          placeholder="https://... (YouTube, TikTok, X/Twitter, MP4) or magnet:?xt=urn:btih:..." 
         />
       </div>
 

@@ -35,7 +35,7 @@ class PlaylistManager {
       if (item.thumbnail) {
         thumbHTML = `<img src="${item.thumbnail}" class="playlist-thumb" alt="Thumbnail" />`;
       } else {
-        const icon = item.type === 'torrent' ? '🧲' : (item.type === 'youtube' ? '▶️' : '🎬');
+        const icon = item.type === 'torrent' ? '🧲' : (item.type === 'youtube' ? '▶️' : (item.type === 'tiktok' ? '🎵' : (item.type === 'twitter' ? '🐦' : '🎬')));
         thumbHTML = `<div class="playlist-thumb">${icon}</div>`;
       }
 

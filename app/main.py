@@ -14,11 +14,12 @@ from app.room_manager import room_manager
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
 else:
+    # app/main.py → parent = app/ → parent = project root
     BASE_DIR = Path(__file__).resolve().parent.parent
 
 STATIC_DIR = BASE_DIR / "static"
 
-# Fallback: if static not found, search upward
+# Fallback: if static not found relative to __file__, search upward
 if not STATIC_DIR.exists():
     for parent in Path(__file__).resolve().parents:
         candidate = parent / "static"
