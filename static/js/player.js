@@ -78,10 +78,15 @@ class UniversalPlayer {
 
     if (this.playOverlay && this.torrentVideo) {
       this.playOverlay.addEventListener('click', () => {
+        this.torrentVideo.muted = false;
         this.torrentVideo.play().then(() => {
           this.playOverlay.style.display = 'none';
         }).catch(err => {
-          console.warn('Playback error after overlay click:', err);
+          console.warn('Playback error after overlay click, trying muted:', err);
+          this.torrentVideo.muted = true;
+          this.torrentVideo.play().then(() => {
+            this.playOverlay.style.display = 'none';
+          }).catch(err2 => console.error('Play totally blocked:', err2));
         });
       });
     }
@@ -837,14 +842,24 @@ class UniversalPlayer {
           }
 
           if (initialState === 'playing') {
-            this.torrentVideo.play().catch(() => {
-              if (this.playOverlay) this.playOverlay.style.display = 'flex';
+            this.torrentVideo.play().catch(playErr => {
+              console.warn('Autoplay prevented by browser gesture policy:', playErr);
+              if (this.playOverlay) {
+                const overlayBtn = this.playOverlay.querySelector('button');
+                if (overlayBtn) overlayBtn.innerText = '▶️ Iniciar reproducción de video';
+                this.playOverlay.style.display = 'flex';
+              }
             });
           } else {
             this.torrentVideo.pause();
           }
 
           setTimeout(() => { this.isApplyingSync = false; }, 1500);
+        } else if (!data.is_streamable) {
+          // If still buffering bytes, make sure overlay doesn't prompt early
+          if (this.playOverlay) {
+            this.playOverlay.style.display = 'none';
+          }
         }
       } catch (err) {
         console.warn('Error fetching torrent status:', err);
