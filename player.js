@@ -57,8 +57,10 @@ class UniversalPlayer {
     this.torrentClient = null;
     this.currentTorrent = null;
 
+    this.embedFrame = null; // For TikTok / Twitter iframes
+
     this.currentMedia = null;
-    this.currentType = null; // 'youtube' | 'torrent' | 'url' | null
+    this.currentType = null; // 'youtube' | 'torrent' | 'url' | 'tiktok' | 'twitter' | null
 
     this.isApplyingSync = false;
     this.syncCooldownUntil = 0;
@@ -72,13 +74,19 @@ class UniversalPlayer {
     this.hudElement = document.getElementById(this.hudElementId);
     this.ytContainer = document.getElementById(this.ytContainerId);
     this.playOverlay = document.getElementById('torrent-play-overlay');
+    this.embedContainer = document.getElementById('embed-player-container');
 
     if (this.playOverlay && this.torrentVideo) {
       this.playOverlay.addEventListener('click', () => {
+        this.torrentVideo.muted = false;
         this.torrentVideo.play().then(() => {
           this.playOverlay.style.display = 'none';
         }).catch(err => {
-          console.warn('Playback error after overlay click:', err);
+          console.warn('Playback error after overlay click, trying muted:', err);
+          this.torrentVideo.muted = true;
+          this.torrentVideo.play().then(() => {
+            this.playOverlay.style.display = 'none';
+          }).catch(err2 => console.error('Play totally blocked:', err2));
         });
       });
     }
@@ -111,24 +119,9 @@ class UniversalPlayer {
       });
     }
 
-    // Initialize WebTorrent Client with tracker options
-    if (typeof WebTorrent !== 'undefined') {
-      try {
-        this.torrentClient = new WebTorrent({
-          tracker: {
-            rtcConfig: {
-              iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:global.stun.twilio.com:3478' }
-              ]
-            }
-          }
-        });
-        console.log('WebTorrent client initialized successfully');
-      } catch (e) {
-        console.warn('WebTorrent init warning:', e);
-      }
-    }
+    // Initialize WebTorrent Client with robust config
+    this._torrentMetaTimeout = null;
+    this._ensureTorrentClient();
 
     // Pre-warm YouTube API
     ensureYouTubeAPI(() => {
@@ -156,16 +149,57 @@ class UniversalPlayer {
 
     if (mediaItem.type === 'youtube') {
       this.hideTorrent();
+      this.hideEmbed();
       this.showYouTube();
       this.loadYouTube(mediaItem.source, initialTime, initialState);
     } else if (mediaItem.type === 'torrent') {
       this.hideYouTube();
+      this.hideEmbed();
       this.showTorrent();
-      this.loadTorrent(mediaItem.source, initialTime, initialState);
+      if (mediaItem.source && mediaItem.source.startsWith('/api/torrent-stream/')) {
+        // Server-side torrent proxy stream: full standard BitTorrent (TCP/UDP/DHT)
+        this.loadServerTorrent(mediaItem.source, initialTime, initialState);
+      } else {
+        // Direct magnet URI fallback to WebTorrent (WebRTC)
+        this.loadTorrent(mediaItem.source, initialTime, initialState);
+      }
     } else if (mediaItem.type === 'url') {
       this.hideYouTube();
+      this.hideEmbed();
       this.showTorrent();
       this.loadDirectUrl(mediaItem.source, initialTime, initialState);
+    } else if (mediaItem.type === 'tiktok') {
+      const isDirectStream = mediaItem.source && mediaItem.source.startsWith('http') && 
+        (mediaItem.source.includes('tiktokcdn') || mediaItem.source.includes('mime_type=video_mp4') || mediaItem.source.includes('.mp4') || mediaItem.source.includes('tikwm'));
+
+      if (isDirectStream) {
+        // Direct MP4 stream extracted for TikTok: fully synchronized via HTML5 video player!
+        this.hideYouTube();
+        this.hideEmbed();
+        this.showTorrent();
+        this.loadDirectUrl(mediaItem.source, initialTime, initialState);
+      } else {
+        this.hideYouTube();
+        this.hideTorrent();
+        this.showEmbed();
+        this.loadTikTok(mediaItem.source);
+      }
+    } else if (mediaItem.type === 'twitter') {
+      const isDirectStream = mediaItem.source && mediaItem.source.startsWith('http') && 
+        (mediaItem.source.includes('.mp4') || mediaItem.source.includes('twimg.com') || mediaItem.source.includes('video.twimg'));
+
+      if (isDirectStream) {
+        // Direct MP4 stream extracted for X: fully synchronized via HTML5 video player!
+        this.hideYouTube();
+        this.hideEmbed();
+        this.showTorrent();
+        this.loadDirectUrl(mediaItem.source, initialTime, initialState);
+      } else {
+        this.hideYouTube();
+        this.hideTorrent();
+        this.showEmbed();
+        this.loadTwitter(mediaItem.source);
+      }
     }
   }
 
@@ -191,6 +225,111 @@ class UniversalPlayer {
     }
     if (this.hudElement) this.hudElement.style.display = 'none';
     if (this.playOverlay) this.playOverlay.style.display = 'none';
+  }
+
+  showEmbed() {
+    if (this.embedContainer) {
+      this.embedContainer.style.display = 'flex';
+    }
+  }
+
+  hideEmbed() {
+    if (this.embedContainer) {
+      this.embedContainer.style.display = 'none';
+      this.embedContainer.innerHTML = '';
+    }
+  }
+
+  loadTikTok(source) {
+    if (!this.embedContainer) return;
+    // Extract video ID from URL or numeric ID
+    const match = String(source).match(/video\/(\d+)/);
+    const videoId = match ? match[1] : (String(source).match(/^\d+$/) ? String(source) : null);
+
+    const embedUrl = videoId
+      ? `https://www.tiktok.com/player/v1/${videoId}?autoplay=1`
+      : (source.startsWith('http') ? source : `https://www.tiktok.com/video/${source}`);
+
+    this.embedContainer.innerHTML = `
+      <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:100%; padding: 10px;">
+        <iframe 
+          src="${embedUrl}"
+          style="width: 340px; max-width: 95%; height: 95%; min-height: 480px; border: none; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.6);"
+          allow="accelerometer; autoplay; encrypted-media; fullscreen; picture-in-picture"
+          allowfullscreen>
+        </iframe>
+        <div style="margin-top: 6px; font-size: 12px; color: #94a3b8;">
+          🎵 TikTok oficial (reproduce directo en el widget)
+        </div>
+      </div>`;
+  }
+
+  loadTwitter(tweetIdOrUrl) {
+    if (!this.embedContainer) return;
+    // Extract numeric ID if given as a full URL
+    const match = String(tweetIdOrUrl).match(/status\/(\d+)/);
+    const tweetId = match ? match[1] : tweetIdOrUrl;
+
+    this.embedContainer.innerHTML = `
+      <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:100%; overflow-y:auto; padding: 10px;">
+        <div id="twitter-widget-mount" style="max-width: 550px; width: 100%; min-height: 300px; display: flex; justify-content: center; align-items: center;">
+          <blockquote class="twitter-tweet" data-theme="dark" data-media-max-view="video">
+            <a href="https://twitter.com/x/status/${tweetId}">Cargando video de X...</a>
+          </blockquote>
+        </div>
+      </div>`;
+
+    const renderWidget = () => {
+      const mount = document.getElementById('twitter-widget-mount');
+      if (window.twttr && window.twttr.widgets && mount) {
+        try {
+          mount.innerHTML = ''; // Clear fallback blockquote
+          window.twttr.widgets.createTweet(tweetId, mount, {
+            theme: 'dark',
+            align: 'center',
+            conversation: 'none'
+          }).then(el => {
+            if (!el) {
+              // Fallback to iframe if createTweet returns null (e.g. adblocker)
+              mount.innerHTML = `
+                <iframe src="https://platform.twitter.com/embed/Tweet.html?id=${tweetId}&theme=dark" 
+                        style="width: 100%; min-height: 350px; border: none; border-radius: 12px;"></iframe>`;
+            }
+          }).catch(err => {
+            console.warn('twttr createTweet error:', err);
+            mount.innerHTML = `
+              <iframe src="https://platform.twitter.com/embed/Tweet.html?id=${tweetId}&theme=dark" 
+                      style="width: 100%; min-height: 350px; border: none; border-radius: 12px;"></iframe>`;
+          });
+        } catch (e) {
+          console.warn('twttr widgets error:', e);
+        }
+      }
+    };
+
+    if (window.twttr && window.twttr.widgets) {
+      renderWidget();
+    } else {
+      this.injectScript('https://platform.twitter.com/widgets.js', () => {
+        // Give widgets a moment to initialize
+        setTimeout(renderWidget, 100);
+      });
+    }
+  }
+
+  injectScript(src, callback) {
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing) {
+      if (typeof callback === 'function') callback();
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    if (typeof callback === 'function') {
+      script.onload = callback;
+    }
+    document.body.appendChild(script);
   }
 
   loadYouTube(videoId, initialTime = 0, initialState = 'playing') {
@@ -313,16 +452,63 @@ class UniversalPlayer {
     this.onPlayerError(msg);
   }
 
+  /**
+   * Ensures the WebTorrent client is alive and functional.
+   * Recreates it if destroyed or errored.
+   */
+  _ensureTorrentClient() {
+    if (this.torrentClient && !this.torrentClient.destroyed) {
+      return true;
+    }
+    if (typeof WebTorrent === 'undefined') {
+      console.error('WebTorrent library not loaded');
+      return false;
+    }
+    try {
+      this.torrentClient = new WebTorrent({
+        tracker: {
+          rtcConfig: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { urls: 'stun:stun2.l.google.com:19302' },
+              { urls: 'stun:global.stun.twilio.com:3478' },
+              { urls: 'stun:stun.stunprotocol.org:3478' }
+            ]
+          }
+        },
+        maxConns: 80
+      });
+      this.torrentClient.on('error', (err) => {
+        console.error('WebTorrent client-level error:', err);
+      });
+      console.log('WebTorrent client (re)initialized');
+      return true;
+    } catch (e) {
+      console.error('Failed to create WebTorrent client:', e);
+      return false;
+    }
+  }
+
+  /**
+   * Extracts the info-hash from a magnet URI for reliable torrent matching.
+   */
+  _extractInfoHash(magnetURI) {
+    const match = magnetURI.match(/btih:([a-fA-F0-9]{40})/i);
+    if (match) return match[1].toLowerCase();
+    // Base32 encoded hash
+    const b32 = magnetURI.match(/btih:([A-Z2-7]{32})/i);
+    if (b32) return b32[1].toLowerCase();
+    return null;
+  }
+
   loadTorrent(magnetURI, initialTime = 0, initialState = 'playing') {
-    if (!this.torrentClient) {
-      if (typeof WebTorrent !== 'undefined') {
-        this.torrentClient = new WebTorrent();
-      } else {
-        alert('La librería WebTorrent no está disponible.');
-        return;
-      }
+    if (!this._ensureTorrentClient()) {
+      alert('La librería WebTorrent no está disponible. Intenta recargar la página.');
+      return;
     }
 
+    // Clean up previous stats monitor
     if (this.statsInterval) {
       clearInterval(this.statsInterval);
       this.statsInterval = null;
@@ -330,104 +516,111 @@ class UniversalPlayer {
 
     if (this.hudElement) {
       this.hudElement.style.display = 'flex';
-      this.updateHud({ peers: 0, speed: 0, progress: 0, status: 'Conectando a trackers WebRTC...' });
+      this.updateHud({ peers: 0, speed: 0, progress: 0, status: '🔗 Conectando a trackers WebRTC...' });
     }
 
-    // Inject verified active WebTorrent trackers into magnet if missing
+    // === 1. Inject verified active WSS trackers ===
     let finalMagnet = magnetURI;
     const activeTrackers = [
       'wss://tracker.openwebtorrent.com',
       'wss://tracker.webtorrent.dev',
-      'wss://tracker.files.fm:7073/announce'
+      'wss://tracker.files.fm:7073/announce',
+      'wss://tracker.btorrent.xyz'
     ];
 
     for (const tracker of activeTrackers) {
-      if (!finalMagnet.includes(encodeURIComponent(tracker)) && !finalMagnet.includes(tracker)) {
-        finalMagnet += `&tr=${encodeURIComponent(tracker)}`;
+      const encoded = encodeURIComponent(tracker);
+      if (!finalMagnet.includes(encoded) && !finalMagnet.includes(tracker)) {
+        finalMagnet += `&tr=${encoded}`;
       }
     }
 
-    // Check if this magnet is already added in the client to avoid duplicate error
+    // === 2. Find existing torrent by info-hash (not full magnet string) ===
+    const infoHash = this._extractInfoHash(finalMagnet);
     let existingTorrent = null;
-    try {
-      existingTorrent = this.torrentClient.get(finalMagnet);
-    } catch (e) {}
+    if (infoHash) {
+      existingTorrent = this.torrentClient.get(infoHash);
+    }
 
+    // === 3. Core handler once torrent metadata is ready ===
     const onTorrentReady = (torrent) => {
       this.currentTorrent = torrent;
-      console.log('Torrent metadata ready:', torrent.name, 'files:', torrent.files.length);
+      console.log('Torrent metadata ready:', torrent.name, '| Files:', torrent.files.length);
 
-      // Select largest or best video file
-      const videoFiles = torrent.files.filter(f => /\.(mp4|m4v|webm|mkv|mov|ogv)$/i.test(f.name));
+      // Find best video file
+      const videoExtensions = /\.(mp4|m4v|webm|mkv|mov|ogv|avi|ts|wmv)$/i;
+      const videoFiles = torrent.files.filter(f => videoExtensions.test(f.name));
       const videoFile = videoFiles.sort((a, b) => b.length - a.length)[0] || torrent.files[0];
 
-      if (videoFile && this.torrentVideo) {
-        this.updateHud({
-          name: videoFile.name,
-          status: 'Buffering & Streaming video...',
-          peers: torrent.numPeers
-        });
+      if (!videoFile) {
+        this.updateHud({ status: '❌ No se encontró ningún archivo de video en el torrent.' });
+        return;
+      }
 
-        // Use WebTorrent's renderTo
-        videoFile.renderTo(this.torrentVideo, {
-          autoplay: (initialState === 'playing'),
-          controls: true
-        }, (err, elem) => {
-          if (err) {
-            console.error('Error in videoFile.renderTo:', err);
-            this.updateHud({ status: `Error al decodificar: ${err.message}` });
-            return;
-          }
+      // Deselect all non-video files to save bandwidth
+      torrent.files.forEach(f => {
+        if (f !== videoFile) {
+          f.deselect();
+        }
+      });
+      videoFile.select();
 
-          console.log('Torrent video stream attached successfully');
-          this.isApplyingSync = true;
-          this.syncCooldownUntil = Date.now() + 1500;
+      console.log(`Selected video file: ${videoFile.name} (${(videoFile.length / 1024 / 1024).toFixed(1)} MB)`);
 
-          if (initialTime > 0) {
-            try { this.torrentVideo.currentTime = initialTime; } catch (e) {}
-          }
+      this.updateHud({
+        name: videoFile.name,
+        status: '⏳ Buffering video...',
+        peers: torrent.numPeers,
+        progress: ((torrent.progress || 0) * 100).toFixed(1)
+      });
 
-          if (initialState === 'playing') {
-            this.torrentVideo.play().catch(playErr => {
-              console.warn('Autoplay prevented by browser gesture policy:', playErr);
-              if (this.playOverlay) {
-                this.playOverlay.style.display = 'flex';
-              }
-            });
-          }
-          setTimeout(() => { this.isApplyingSync = false; }, 1200);
-        });
+      // === 4. Try renderTo first (works great for MP4/WebM), fallback to Blob URL ===
+      const isNativeFormat = /\.(mp4|webm|m4v|ogv)$/i.test(videoFile.name);
+
+      if (isNativeFormat) {
+        this._renderTorrentNative(videoFile, torrent, initialTime, initialState);
+      } else {
+        // For MKV, AVI, etc: generate a blob URL
+        this._renderTorrentBlob(videoFile, torrent, initialTime, initialState);
       }
     };
 
+    // === 5. Destroy previous torrents, add new one ===
     if (existingTorrent && existingTorrent.ready) {
+      // Reuse existing torrent that's already ready
       onTorrentReady(existingTorrent);
     } else {
-      // Destroy any other active torrents to keep bandwidth free
-      this.torrentClient.torrents.forEach(t => {
-        if (!existingTorrent || t !== existingTorrent) {
-          try { t.destroy(); } catch (e) {}
-        }
+      // Destroy all other torrents to free resources
+      const torrentsToDestroy = this.torrentClient.torrents.filter(t => t !== existingTorrent);
+      torrentsToDestroy.forEach(t => {
+        try { t.destroy(); } catch (e) {}
       });
 
       try {
-        const torrent = existingTorrent || this.torrentClient.add(finalMagnet);
+        const torrent = existingTorrent || this.torrentClient.add(finalMagnet, {
+          announce: activeTrackers,
+          maxWebConns: 6
+        });
         this.currentTorrent = torrent;
 
         torrent.on('wire', () => {
           this.updateHud({
             peers: torrent.numPeers,
-            status: torrent.ready ? 'Descargando...' : 'Obteniendo metadatos...'
+            status: torrent.ready ? '📥 Descargando...' : '📋 Obteniendo metadatos...'
           });
         });
 
         torrent.on('error', (err) => {
           console.error('Torrent error:', err);
-          this.updateHud({ status: `Error en torrent: ${err.message}` });
+          this.updateHud({ status: `❌ Error: ${err.message}` });
         });
 
         torrent.on('warning', (warn) => {
           console.warn('Torrent warning:', warn);
+        });
+
+        torrent.on('noPeers', (announceType) => {
+          console.warn(`No peers found via ${announceType}`);
         });
 
         if (torrent.ready) {
@@ -436,38 +629,65 @@ class UniversalPlayer {
           torrent.once('ready', () => {
             onTorrentReady(torrent);
           });
+
+          // Metadata timeout: if no metadata after 45s, inform the user
+          this._torrentMetaTimeout = setTimeout(() => {
+            if (torrent && !torrent.ready && !torrent.destroyed) {
+              this.updateHud({
+                status: '⚠️ No se pudieron obtener metadatos. El torrent puede no tener seeders WebRTC activos.'
+              });
+            }
+          }, 45000);
         }
       } catch (err) {
         console.error('Failed to add magnet link:', err);
-        this.updateHud({ status: `Error: ${err.message}` });
+        this.updateHud({ status: `❌ Error al agregar magnet: ${err.message}` });
       }
     }
 
-    // Monitor statistics every 500ms
+    // === 6. Stats monitor ===
     let zeroPeerSeconds = 0;
+    let hasEverHadPeers = false;
     this.statsInterval = setInterval(() => {
-      if (!this.currentTorrent) return;
+      if (!this.currentTorrent || this.currentTorrent.destroyed) return;
 
-      const peers = this.currentTorrent.numPeers || 0;
-      const speed = this.currentTorrent.downloadSpeed || 0;
-      const progress = ((this.currentTorrent.progress || 0) * 100).toFixed(1);
+      const t = this.currentTorrent;
+      const peers = t.numPeers || 0;
+      const speed = t.downloadSpeed || 0;
+      const progress = ((t.progress || 0) * 100).toFixed(1);
+      const uploaded = t.uploaded || 0;
 
-      if (peers === 0) {
-        zeroPeerSeconds += 0.5;
-      } else {
+      if (peers > 0) {
+        hasEverHadPeers = true;
         zeroPeerSeconds = 0;
-      }
-
-      let statusText = 'Conectando a enjambre...';
-      if (this.currentTorrent.ready) {
-        statusText = peers > 0 ? 'Transmitiendo en vivo' : 'Buscando peers WebRTC...';
       } else {
-        statusText = 'Descargando metadatos del torrent...';
+        zeroPeerSeconds += 0.5;
       }
 
-      // If after 15 seconds no WebRTC peers are found, inform the user clearly
-      if (zeroPeerSeconds > 15 && peers === 0) {
-        statusText = '⚠️ 0 peers WebRTC. Se requieren seeders con WebTorrent/WebRTC para streaming web.';
+      let statusText = '🔗 Conectando a enjambre...';
+      if (t.ready) {
+        if (peers > 0) {
+          if (parseFloat(progress) >= 100) {
+            statusText = '✅ Descarga completa — Reproduciendo';
+          } else {
+            statusText = `📥 Transmitiendo (${progress}%)`;
+          }
+        } else if (hasEverHadPeers) {
+          statusText = '⚡ Peers desconectados — Reconectando...';
+        } else {
+          statusText = '🔍 Buscando peers WebRTC...';
+        }
+      } else {
+        statusText = '📋 Descargando metadatos del torrent...';
+      }
+
+      // Progressive warnings
+      if (zeroPeerSeconds >= 60 && peers === 0 && !hasEverHadPeers) {
+        statusText = '❌ Sin peers WebRTC después de 1 min. Este torrent probablemente solo tiene seeders BitTorrent tradicionales (incompatibles con el navegador). Prueba un magnet con seeders WebTorrent.';
+      } else if (zeroPeerSeconds >= 30 && peers === 0 && !hasEverHadPeers) {
+        statusText = '⚠️ Sin peers WebRTC (30s). WebTorrent solo conecta con seeders que usan WebRTC. Torrents populares con WebSeeds tienen mejor compatibilidad.';
+      } else if (zeroPeerSeconds >= 15 && peers === 0 && !hasEverHadPeers) {
+        statusText = '⏳ Sin peers aún (15s)... WebTorrent necesita seeders WebRTC, no BitTorrent tradicional.';
       }
 
       this.updateHud({
@@ -477,6 +697,174 @@ class UniversalPlayer {
         status: statusText
       });
     }, 500);
+  }
+
+  /**
+   * Render torrent video natively via renderTo (best for MP4/WebM).
+   * Falls back to blob URL if renderTo fails.
+   */
+  _renderTorrentNative(videoFile, torrent, initialTime, initialState) {
+    if (!this.torrentVideo) return;
+
+    videoFile.renderTo(this.torrentVideo, {
+      autoplay: false,
+      controls: true
+    }, (err, elem) => {
+      if (err) {
+        console.warn('renderTo failed, falling back to blob URL:', err.message);
+        this._renderTorrentBlob(videoFile, torrent, initialTime, initialState);
+        return;
+      }
+
+      console.log('Torrent video stream attached via renderTo');
+      this._onTorrentVideoReady(initialTime, initialState);
+    });
+  }
+
+  /**
+   * Render torrent video via Blob URL (fallback for non-native formats).
+   */
+  _renderTorrentBlob(videoFile, torrent, initialTime, initialState) {
+    if (!this.torrentVideo) return;
+
+    this.updateHud({ status: '⏳ Generando stream de video (Blob)...' });
+
+    videoFile.getBlob((err, blob) => {
+      if (err) {
+        // If getBlob not available, try getBlobURL
+        if (typeof videoFile.getBlobURL === 'function') {
+          videoFile.getBlobURL((err2, url) => {
+            if (err2) {
+              console.error('Failed to create blob URL:', err2);
+              this.updateHud({ status: `❌ No se puede reproducir: ${err2.message}` });
+              return;
+            }
+            this.torrentVideo.src = url;
+            this._onTorrentVideoReady(initialTime, initialState);
+          });
+        } else {
+          console.error('No blob method available:', err);
+          this.updateHud({ status: `❌ Formato no soportado por el navegador: ${videoFile.name}` });
+        }
+        return;
+      }
+
+      const url = URL.createObjectURL(blob);
+      this.torrentVideo.src = url;
+      this._onTorrentVideoReady(initialTime, initialState);
+    });
+  }
+
+  /**
+   * Common setup after torrent video element is ready.
+   */
+  _onTorrentVideoReady(initialTime, initialState) {
+    this.isApplyingSync = true;
+    this.syncCooldownUntil = Date.now() + 2000;
+
+    if (initialTime > 0) {
+      try { this.torrentVideo.currentTime = initialTime; } catch (e) {}
+    }
+
+    if (initialState === 'playing') {
+      this.torrentVideo.play().catch(playErr => {
+        console.warn('Autoplay prevented:', playErr.message);
+        if (this.playOverlay) {
+          this.playOverlay.style.display = 'flex';
+        }
+      });
+    }
+
+    this.updateHud({ status: '▶️ Reproduciendo desde torrent' });
+    setTimeout(() => { this.isApplyingSync = false; }, 1500);
+  }
+
+  loadServerTorrent(streamUrl, initialTime, initialState) {
+    if (!this.torrentVideo) return;
+    const downloadId = streamUrl.split('/').pop();
+
+    if (this.statsInterval) {
+      clearInterval(this.statsInterval);
+      this.statsInterval = null;
+    }
+
+    if (this.hudElement) {
+      this.hudElement.style.display = 'flex';
+      this.updateHud({
+        peers: 0,
+        speed: 0,
+        progress: 0,
+        status: '⚡ Servidor conectando a enjambre BitTorrent (TCP/UDP)...'
+      });
+    }
+
+    let isVideoAttached = false;
+
+    // Poll status from server to show real-time BitTorrent swarm metrics
+    this.statsInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/torrent-status/${downloadId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        let statusText = '⚡ Descargando en servidor...';
+        if (!data.has_metadata) {
+          statusText = '📋 Obteniendo metadatos (DHT/Trackers)...';
+        } else if (data.progress >= 100) {
+          statusText = '✅ Torrent 100% descargado en servidor';
+        } else if (data.num_peers > 0) {
+          statusText = `📥 Descargando en servidor (${data.progress}%) [${data.num_peers} peers]`;
+        } else {
+          statusText = '🔍 Buscando peers BitTorrent en DHT...';
+        }
+
+        if (data.error) {
+          statusText = `⚠️ ${data.error}`;
+        }
+
+        this.updateHud({
+          peers: data.num_peers || 0,
+          speed: data.download_rate || 0,
+          progress: data.progress || 0,
+          status: statusText
+        });
+
+        // Once metadata arrives and stream is available, attach to video player
+        if (data.is_streamable && !isVideoAttached) {
+          isVideoAttached = true;
+          this.torrentVideo.src = streamUrl;
+          this.torrentVideo.controls = true;
+          this.isApplyingSync = true;
+          this.syncCooldownUntil = Date.now() + 2000;
+
+          if (initialTime > 0) {
+            try { this.torrentVideo.currentTime = initialTime; } catch (e) {}
+          }
+
+          if (initialState === 'playing') {
+            this.torrentVideo.play().catch(playErr => {
+              console.warn('Autoplay prevented by browser gesture policy:', playErr);
+              if (this.playOverlay) {
+                const overlayBtn = this.playOverlay.querySelector('button');
+                if (overlayBtn) overlayBtn.innerText = '▶️ Iniciar reproducción de video';
+                this.playOverlay.style.display = 'flex';
+              }
+            });
+          } else {
+            this.torrentVideo.pause();
+          }
+
+          setTimeout(() => { this.isApplyingSync = false; }, 1500);
+        } else if (!data.is_streamable) {
+          // If still buffering bytes, make sure overlay doesn't prompt early
+          if (this.playOverlay) {
+            this.playOverlay.style.display = 'none';
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching torrent status:', err);
+      }
+    }, 1000);
   }
 
   loadDirectUrl(url, initialTime, initialState) {
@@ -606,6 +994,7 @@ class UniversalPlayer {
   stopAll() {
     this.hideYouTube();
     this.hideTorrent();
+    this.hideEmbed();
     if (this.currentTorrent) {
       try { this.currentTorrent.destroy(); } catch (e) {}
       this.currentTorrent = null;
@@ -613,6 +1002,10 @@ class UniversalPlayer {
     if (this.statsInterval) {
       clearInterval(this.statsInterval);
       this.statsInterval = null;
+    }
+    if (this._torrentMetaTimeout) {
+      clearTimeout(this._torrentMetaTimeout);
+      this._torrentMetaTimeout = null;
     }
   }
 }
