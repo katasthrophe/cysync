@@ -6,6 +6,11 @@ from typing import Dict, List, Optional, Set
 from fastapi import WebSocket
 import httpx
 
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
+
 from app.models import MediaItem, PlaybackState, ChatMessage, UserInfo
 
 # Canonical 100% active WebTorrent magnet for Sintel (40+ live WebRTC seeders + WebSeed)
@@ -138,10 +143,58 @@ def detect_media_type(source: str) -> tuple[str, str, str]:
 
     return "url", source, "Media Stream"
 
-async def fetch_media_title(media_type: str, source: str, default_title: str) -> tuple[str, Optional[str], float]:
+def _extract_x_direct_sync(url: str) -> Optional[dict]:
+    if not yt_dlp:
+        return None
+    try:
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'quiet': True,
+            'no_warnings': True
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if info and info.get('url'):
+                return {
+                    'stream_url': info.get('url'),
+                    'title': info.get('title'),
+                    'thumbnail': info.get('thumbnail'),
+                    'duration': float(info.get('duration') or 0.0)
+                }
+    except Exception:
+        pass
+    return None
+
+async def _extract_tiktok_direct(url_or_id: str) -> Optional[dict]:
+    try:
+        target_url = url_or_id if url_or_id.startswith('http') else f"https://www.tiktok.com/video/{url_or_id}"
+        async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+            resp = await client.get(f"https://www.tikwm.com/api/?url={urllib.parse.quote(target_url, safe='')}")
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get('code') == 0:
+                    d = data.get('data', {})
+                    play_url = d.get('play')
+                    if play_url:
+                        return {
+                            'stream_url': play_url,
+                            'title': d.get('title') or 'TikTok Video',
+                            'thumbnail': d.get('cover'),
+                            'duration': float(d.get('duration') or 0.0)
+                        }
+    except Exception:
+        pass
+    return None
+
+async def fetch_media_title(media_type: str, source: str, default_title: str) -> tuple[str, Optional[str], float, str]:
+    """
+    Returns: (title, thumbnail, duration, final_source)
+    For TikTok and Twitter, if a direct mp4 stream is extracted, final_source will be that MP4 URL.
+    """
     title = default_title
     thumbnail = None
     duration = 0.0
+    final_source = source
 
     if media_type == "youtube":
         yt_id = source
@@ -164,53 +217,78 @@ async def fetch_media_title(media_type: str, source: str, default_title: str) ->
 
     elif media_type == "tiktok":
         thumbnail = "https://www.tiktok.com/favicon.ico"
-        try:
-            target_url = f"https://www.tiktok.com/video/{source}" if source.isdigit() else source
-            encoded = urllib.parse.quote(target_url, safe='')
-            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
-                res = await client.get(
-                    f"https://www.tiktok.com/oembed?url={encoded}",
-                    headers={"User-Agent": "Mozilla/5.0"}
-                )
-                if res.status_code == 200:
-                    data = res.json()
-                    t = data.get("title")
-                    if t:
-                        title = t[:80]
-                    elif data.get("author_name"):
-                        title = f"TikTok de @{data.get('author_name')}"
-                    thumb = data.get("thumbnail_url")
-                    if thumb:
-                        thumbnail = thumb
-        except Exception:
-            pass
+        # 1. Attempt direct MP4 stream extraction for full real-time sync
+        tt_info = await _extract_tiktok_direct(source)
+        if tt_info and tt_info.get('stream_url'):
+            final_source = tt_info['stream_url']
+            if tt_info.get('title'):
+                title = tt_info['title'][:80]
+            if tt_info.get('thumbnail'):
+                thumbnail = tt_info['thumbnail']
+            if tt_info.get('duration'):
+                duration = tt_info['duration']
+        else:
+            # Fallback to oEmbed metadata
+            try:
+                target_url = f"https://www.tiktok.com/video/{source}" if source.isdigit() else source
+                encoded = urllib.parse.quote(target_url, safe='')
+                async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+                    res = await client.get(
+                        f"https://www.tiktok.com/oembed?url={encoded}",
+                        headers={"User-Agent": "Mozilla/5.0"}
+                    )
+                    if res.status_code == 200:
+                        data = res.json()
+                        t = data.get("title")
+                        if t:
+                            title = t[:80]
+                        elif data.get("author_name"):
+                            title = f"TikTok de @{data.get('author_name')}"
+                        thumb = data.get("thumbnail_url")
+                        if thumb:
+                            thumbnail = thumb
+            except Exception:
+                pass
 
     elif media_type == "twitter":
         thumbnail = "https://abs.twimg.com/favicons/twitter.3.ico"
-        try:
-            tweet_url = f"https://twitter.com/i/status/{source}" if source.isdigit() else source
-            encoded = urllib.parse.quote(tweet_url, safe='')
-            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
-                res = await client.get(
-                    f"https://publish.twitter.com/oembed?url={encoded}&omit_script=true",
-                    headers={"User-Agent": "Mozilla/5.0"}
-                )
-                if res.status_code == 200:
-                    data = res.json()
-                    author = data.get("author_name", "")
-                    text = data.get("html", "")
-                    # Extract first line of tweet text from HTML
-                    import re as _re
-                    clean = _re.sub(r'<[^>]+>', '', text).strip()
-                    snippet = clean[:60].strip()
-                    if author and snippet:
-                        title = f"@{author}: {snippet}..."
-                    elif author:
-                        title = f"Tweet de @{author}"
-        except Exception:
-            pass
+        tweet_url = f"https://twitter.com/i/status/{source}" if source.isdigit() else source
+        # 1. Attempt direct MP4 stream extraction for full real-time sync
+        if yt_dlp:
+            x_info = await asyncio.to_thread(_extract_x_direct_sync, tweet_url)
+            if x_info and x_info.get('stream_url'):
+                final_source = x_info['stream_url']
+                if x_info.get('title'):
+                    title = x_info['title'][:80]
+                if x_info.get('thumbnail'):
+                    thumbnail = x_info['thumbnail']
+                if x_info.get('duration'):
+                    duration = x_info['duration']
+        
+        # If no stream url extracted, fallback to oEmbed title
+        if final_source == source:
+            try:
+                encoded = urllib.parse.quote(tweet_url, safe='')
+                async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+                    res = await client.get(
+                        f"https://publish.twitter.com/oembed?url={encoded}&omit_script=true",
+                        headers={"User-Agent": "Mozilla/5.0"}
+                    )
+                    if res.status_code == 200:
+                        data = res.json()
+                        author = data.get("author_name", "")
+                        text = data.get("html", "")
+                        import re as _re
+                        clean = _re.sub(r'<[^>]+>', '', text).strip()
+                        snippet = clean[:60].strip()
+                        if author and snippet:
+                            title = f"@{author}: {snippet}..."
+                        elif author:
+                            title = f"Tweet de @{author}"
+            except Exception:
+                pass
 
-    return title, thumbnail, duration
+    return title, thumbnail, duration, final_source
 
 
 class Room:
@@ -392,11 +470,11 @@ class Room:
 
     async def add_media_to_playlist(self, source: str, title: Optional[str], added_by: str, play_now: bool = False) -> MediaItem:
         media_type, cleaned_source, default_title = detect_media_type(source)
-        real_title, thumb, duration = await fetch_media_title(media_type, cleaned_source, title or default_title)
+        real_title, thumb, duration, final_source = await fetch_media_title(media_type, cleaned_source, title or default_title)
 
         item = MediaItem(
             type=media_type,
-            source=cleaned_source,
+            source=final_source,
             title=real_title,
             thumbnail=thumb,
             duration=duration,

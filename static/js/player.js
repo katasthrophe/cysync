@@ -173,15 +173,37 @@ class UniversalPlayer {
       this.showTorrent();
       this.loadDirectUrl(mediaItem.source, initialTime, initialState);
     } else if (mediaItem.type === 'tiktok') {
-      this.hideYouTube();
-      this.hideTorrent();
-      this.showEmbed();
-      this.loadTikTok(mediaItem.source);
+      const isDirectStream = mediaItem.source && mediaItem.source.startsWith('http') && 
+        (mediaItem.source.includes('tiktokcdn') || mediaItem.source.includes('mime_type=video_mp4') || mediaItem.source.includes('.mp4') || mediaItem.source.includes('tikwm'));
+
+      if (isDirectStream) {
+        // Direct MP4 stream extracted for TikTok: fully synchronized via HTML5 video player!
+        this.hideYouTube();
+        this.hideEmbed();
+        this.showTorrent();
+        this.loadDirectUrl(mediaItem.source, initialTime, initialState);
+      } else {
+        this.hideYouTube();
+        this.hideTorrent();
+        this.showEmbed();
+        this.loadTikTok(mediaItem.source);
+      }
     } else if (mediaItem.type === 'twitter') {
-      this.hideYouTube();
-      this.hideTorrent();
-      this.showEmbed();
-      this.loadTwitter(mediaItem.source);
+      const isDirectStream = mediaItem.source && mediaItem.source.startsWith('http') && 
+        (mediaItem.source.includes('.mp4') || mediaItem.source.includes('twimg.com') || mediaItem.source.includes('video.twimg'));
+
+      if (isDirectStream) {
+        // Direct MP4 stream extracted for X: fully synchronized via HTML5 video player!
+        this.hideYouTube();
+        this.hideEmbed();
+        this.showTorrent();
+        this.loadDirectUrl(mediaItem.source, initialTime, initialState);
+      } else {
+        this.hideYouTube();
+        this.hideTorrent();
+        this.showEmbed();
+        this.loadTwitter(mediaItem.source);
+      }
     }
   }
 
