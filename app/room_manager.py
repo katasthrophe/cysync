@@ -13,21 +13,11 @@ except ImportError:
 
 from app.models import MediaItem, PlaybackState, ChatMessage, UserInfo
 
-# Canonical 100% active WebTorrent magnet for Sintel (40+ live WebRTC seeders + WebSeed)
-SINTEL_WEBTORRENT_MAGNET = (
-    "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10"
-    "&dn=Sintel"
-    "&tr=udp%3A%2F%2Fexplodie.org%3A6969"
-    "&tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969"
-    "&tr=udp%3A%2F%2Ftracker.empire-js.us%3A1337"
-    "&tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969"
-    "&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337"
-    "&tr=wss%3A%2F%2Ftracker.openwebtorrent.com"
-    "&tr=wss%3A%2F%2Ftracker.webtorrent.dev"
-    "&tr=wss%3A%2F%2Ftracker.files.fm%3A7073%2Fannounce"
-    "&ws=https%3A%2F%2Fwebtorrent.io%2Ftorrents%2F"
-    "&xs=https%3A%2F%2Fwebtorrent.io%2Ftorrents%2Fsintel.torrent"
-)
+# Import torrent proxy (graceful: works even if libtorrent not installed)
+try:
+    from app.torrent_proxy import torrent_proxy
+except ImportError:
+    torrent_proxy = None
 
 def extract_youtube_id(url_or_id: str) -> Optional[str]:
     """
@@ -214,6 +204,20 @@ async def fetch_media_title(media_type: str, source: str, default_title: str) ->
 
     elif media_type == "torrent":
         thumbnail = "https://webtorrent.io/img/network.png"
+        # If server-side torrent proxy is active, add the magnet to start downloading
+        # and route the source through our HTTP stream endpoint!
+        if torrent_proxy and torrent_proxy.available:
+            try:
+                dl_id = await torrent_proxy.add_magnet(source)
+                if dl_id:
+                    # Give it a short moment (up to 4s) to quickly grab metadata if peers respond fast
+                    has_meta = await torrent_proxy.wait_for_metadata(dl_id, timeout=4.0)
+                    dl_status = torrent_proxy.get_status(dl_id)
+                    if dl_status and dl_status.get("name"):
+                        title = dl_status["name"]
+                    final_source = f"/api/torrent-stream/{dl_id}"
+            except Exception as e:
+                print(f"Torrent proxy add failed, falling back to WebTorrent: {e}")
 
     elif media_type == "tiktok":
         thumbnail = "https://www.tiktok.com/favicon.ico"

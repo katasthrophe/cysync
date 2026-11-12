@@ -1,16 +1,18 @@
 import os
+import re
 import sys
 import json
 import uuid
 from pathlib import Path
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.models import AddMediaRequest, AuthRequest, CreateRoomRequest
 from app.room_manager import room_manager
 from app.auth import register_user, authenticate_user
+from app.torrent_proxy import torrent_proxy
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
@@ -98,6 +100,119 @@ async def list_rooms():
 async def get_room_state(room_id: str):
     room = room_manager.get_or_create_room(room_id)
     return room.get_full_state()
+
+
+# ── Torrent Proxy endpoints ──────────────────────────────────────────
+
+@app.get("/api/torrent-proxy/available")
+async def torrent_proxy_available():
+    """Check if the server-side torrent proxy is available (libtorrent installed)."""
+    return {"available": torrent_proxy.available}
+
+
+@app.get("/api/torrent-status/{download_id}")
+async def torrent_status(download_id: str):
+    """Get the download status of a server-side torrent."""
+    status = torrent_proxy.get_status(download_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Download not found")
+    return status
+
+
+@app.get("/api/torrent-stream/{download_id}")
+async def torrent_stream(download_id: str, request: Request):
+    """
+    Stream a torrent's video file via HTTP with Range request support.
+    This allows the browser's <video> element to seek and stream normally,
+    even while the torrent is still downloading (sequential download mode).
+    """
+    dl = torrent_proxy.get_download(download_id)
+    if not dl:
+        raise HTTPException(status_code=404, detail="Download not found")
+
+    file_path = dl.video_file_path
+    if not file_path or not file_path.exists():
+        # File not ready yet — metadata still downloading
+        return Response(
+            content='{"status": "buffering", "message": "Torrent is still downloading..."}',
+            status_code=202,
+            media_type="application/json",
+            headers={"Retry-After": "3"}
+        )
+
+    file_size = file_path.stat().st_size
+    if file_size == 0:
+        return Response(
+            content='{"status": "buffering", "message": "File is buffering initial data..."}',
+            status_code=202,
+            media_type="application/json",
+            headers={"Retry-After": "2"}
+        )
+
+    content_type = torrent_proxy.get_content_type(download_id)
+    range_header = request.headers.get("range")
+
+    if range_header:
+        # Parse Range: bytes=START-END
+        range_match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+        if not range_match:
+            raise HTTPException(status_code=416, detail="Invalid Range header")
+
+        start = int(range_match.group(1))
+        end = int(range_match.group(2)) if range_match.group(2) else file_size - 1
+
+        if start >= file_size:
+            return Response(
+                status_code=416,
+                headers={"Content-Range": f"bytes */{file_size}"}
+            )
+
+        end = min(end, file_size - 1)
+        length = end - start + 1
+
+        def generate_range():
+            with open(file_path, "rb") as f:
+                f.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = min(remaining, 65536)
+                    data = f.read(chunk)
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        return StreamingResponse(
+            generate_range(),
+            status_code=206,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Content-Length": str(length),
+                "Accept-Ranges": "bytes",
+                "Content-Type": content_type,
+                "Cache-Control": "no-cache",
+            },
+        )
+
+    # Full file response (no Range header)
+    def generate_full():
+        with open(file_path, "rb") as f:
+            while True:
+                data = f.read(65536)
+                if not data:
+                    break
+                yield data
+
+    return StreamingResponse(
+        generate_full(),
+        status_code=200,
+        headers={
+            "Content-Length": str(file_size),
+            "Accept-Ranges": "bytes",
+            "Content-Type": content_type,
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 @app.post("/api/rooms/{room_id}/add")
