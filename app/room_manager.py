@@ -228,36 +228,6 @@ class Room:
         self.lock_controls: bool = False
         self.voteskips: Set[str] = set()
 
-        self._seed_default_playlist()
-
-    def _seed_default_playlist(self):
-        # 1. YouTube 4K Demo
-        item1 = MediaItem(
-            type="youtube",
-            source="aqz-KE-bpKQ",
-            title="Big Buck Bunny 4K 60fps (Blender Open Movie)",
-            thumbnail="https://img.youtube.com/vi/aqz-KE-bpKQ/hqdefault.jpg",
-            added_by="System"
-        )
-        # 2. Sintel Torrent Magnet (40+ active WebTorrent seeders & WebSeed)
-        item2 = MediaItem(
-            type="torrent",
-            source=SINTEL_WEBTORRENT_MAGNET,
-            title="Sintel (Official WebTorrent Magnet)",
-            thumbnail="https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Sintel_poster.jpg/440px-Sintel_poster.jpg",
-            added_by="System"
-        )
-        # 3. Direct HTML5 MP4 Stream (Big Buck Bunny 720p)
-        item3 = MediaItem(
-            type="url",
-            source="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-            title="Big Buck Bunny (Direct MP4 Stream)",
-            thumbnail="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Big_buck_bunny_poster_big.jpg/440px-Big_buck_bunny_poster_big.jpg",
-            added_by="System"
-        )
-        self.current_media = item1
-        self.playlist = [item2, item3]
-
     async def broadcast(self, event_type: str, data: dict, exclude_user_id: Optional[str] = None):
         message = {"type": event_type, "data": data}
         dead_connections = []
